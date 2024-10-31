@@ -58,7 +58,7 @@ class RidgeRegularizer(torch.nn.Module):
                 ckpt = torch.load(pretrained, map_location=lambda storage, loc: storage)
             self.load_state_dict(ckpt)
 
-    def forward(self, x, sigma, tol=1e-4, max_iter=500):
+    def forward(self, x, sigma, tol=1e-4, max_iter=500, mask=1.):
         r"""
         Solve the denoising problem for the Weakly Convex Ridge Regularizer
 
@@ -74,6 +74,7 @@ class RidgeRegularizer(torch.nn.Module):
             max_iter=max_iter,
             physics_norm=1,
             init=x,
+            mask=mask
         )
 
     def reconstruct(
@@ -86,6 +87,7 @@ class RidgeRegularizer(torch.nn.Module):
         max_iter=500,
         physics_norm=None,
         init=None,
+        mask=1.,
     ):
         adj = physics.A_adjoint(y)
         if physics_norm is None:
@@ -107,7 +109,7 @@ class RidgeRegularizer(torch.nn.Module):
         step_size = 1 / (physics_norm + lmbd * mu)
         for i in range(max_iter):
             x_old = torch.clone(x)
-            grad = lmbd * self.grad(z, sigma) + physics.A_adjoint(physics.A(z) - y)
+            grad = lmbd * self.grad(z, sigma, mask) + physics.A_adjoint(physics.A(z) - y)
             grad = grad * step_size
 
             x = z - grad
@@ -126,7 +128,7 @@ class RidgeRegularizer(torch.nn.Module):
                 break
         return x
 
-    def cost(self, x, sigma):
+    def cost(self, x, sigma, mask=1):
         r"""
         Evaluates the regularizer itself.
 
@@ -135,16 +137,16 @@ class RidgeRegularizer(torch.nn.Module):
         if isinstance(sigma, float):
             sigma = sigma * torch.ones((x.size(0),), device=x.device) * 255
 
-        return self.potential(self.W(x), sigma).sum(dim=tuple(range(1, len(x.shape))))
+        return (self.potential(self.W(x), sigma) * mask).sum(dim=tuple(range(1, len(x.shape))))
 
-    def grad(self, x, sigma):
+    def grad(self, x, sigma, mask=1):
         r"""
         Evaluates the gradient of the regularizer
         """
         if isinstance(sigma, float):
             sigma = sigma * torch.ones((x.size(0),), device=x.device) * 255
 
-        return self.W.transpose(self.potential.derivative(self.W(x), sigma))
+        return self.W.transpose(mask * self.potential.derivative(self.W(x), sigma))
 
     def load_state_dict(self, state_dict, **kwargs):
         r"""
@@ -322,3 +324,5 @@ class ZeroMean(torch.nn.Module):
     def forward(self, X):
         Y = X - torch.mean(X, dim=(1, 2, 3)).unsqueeze(1).unsqueeze(2).unsqueeze(3)
         return Y
+
+
